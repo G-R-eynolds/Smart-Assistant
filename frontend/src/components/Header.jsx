@@ -8,7 +8,7 @@ const Header = ({
   isLoading = false 
 }) => {
   return (
-    <div className="flex items-center justify-between p-6 border-b border-gray-200 bg-white">
+    <div className="flex items-center justify-between p-6 border-b border-beige-200 bg-gradient-warm">
       <div className="flex items-center gap-3">
         <button 
           onClick={onSaveConversation}
@@ -22,7 +22,7 @@ const Header = ({
         <button 
           onClick={onScrapeJobs}
           disabled={isLoading}
-          className="btn btn-primary"
+          className="btn btn-orange"
         >
           {isLoading ? (
             <Loader2 size={18} className="animate-spin" />
@@ -43,8 +43,8 @@ const Header = ({
       </div>
       
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2 text-sm text-gray-600">
-          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+        <div className="flex items-center gap-2 text-sm text-warm-gray-600">
+          <div className="w-2 h-2 bg-success-500 rounded-full animate-pulse"></div>
           <span>AI Assistant Active</span>
         </div>
       </div>

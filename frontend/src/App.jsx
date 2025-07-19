@@ -148,7 +148,7 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-25">
+    <div className="min-h-screen bg-sandy-50 desktop-optimized">
       <div className="flex h-screen">
         {/* Sidebar */}
         <Sidebar 
@@ -165,7 +165,7 @@ function App() {
         />
         
         {/* Main Content */}
-        <div className="flex-1 flex flex-col bg-white">
+        <div className="flex-1 flex flex-col bg-white border-l border-beige-200">
           {/* Header */}
           <Header 
             onSaveConversation={handleSaveConversation}

@@ -45,8 +45,8 @@ const ChatInput = ({
   ];
 
   return (
-    <div className="p-6 bg-white border-t border-gray-200">
-      <div className="max-w-4xl mx-auto">
+    <div className="p-6 bg-gradient-warm border-t border-beige-200">
+      <div className="chat-area-desktop max-w-4xl mx-auto">
         {/* Suggestion Pills */}
         {!value && (
           <div className="flex flex-wrap justify-center gap-2 mb-4">
@@ -54,7 +54,7 @@ const ChatInput = ({
               <button 
                 key={index}
                 onClick={() => onChange && onChange(suggestion)}
-                className="px-3 py-1 bg-gray-50 border border-gray-200 rounded-full text-sm text-gray-600 hover:bg-gray-100 hover:border-gray-300 transition-all"
+                className="px-3 py-1 bg-white border border-beige-200 rounded-full text-sm text-warm-gray-600 hover:bg-beige-50 hover:border-sandy-300 transition-all shadow-sm"
                 disabled={disabled}
               >
                 {suggestion}
@@ -65,11 +65,11 @@ const ChatInput = ({
         
         <form onSubmit={handleSubmit}>
           <div className="relative">
-            <div className="flex items-center bg-white border border-gray-300 rounded-2xl shadow-sm hover:shadow-md transition-all focus-within:border-blue-500 focus-within:shadow-md overflow-hidden">
+            <div className="flex items-center bg-white border border-beige-300 rounded-2xl shadow-md hover:shadow-lg transition-all focus-within:border-sandy-400 focus-within:shadow-lg overflow-hidden">
               {/* Paperclip Button */}
               <button 
                 type="button"
-                className="p-4 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+                className="p-4 text-warm-gray-400 hover:text-sandy-600 transition-colors disabled:opacity-50"
                 onClick={handlePaperclipClick}
                 disabled={disabled}
               >
@@ -84,14 +84,14 @@ const ChatInput = ({
                 onChange={handleInputChange}
                 onKeyPress={handleKeyPress}
                 disabled={disabled}
-                className="flex-1 py-4 px-2 bg-transparent focus:outline-none text-gray-900 placeholder-gray-500 disabled:opacity-50"
+                className="flex-1 py-4 px-2 bg-transparent focus:outline-none text-warm-gray-900 placeholder-warm-gray-400 disabled:opacity-50"
               />
               
               <div className="flex items-center">
                 {/* Microphone Button */}
                 <button 
                   type="button"
-                  className="p-4 text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+                  className="p-4 text-warm-gray-400 hover:text-sandy-600 transition-colors disabled:opacity-50"
                   onClick={handleMicrophoneClick}
                   disabled={disabled}
                 >
@@ -103,8 +103,8 @@ const ChatInput = ({
                   type="submit"
                   className={`m-2 p-3 rounded-xl transition-all ${
                     value.trim() && !disabled
-                      ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm hover:shadow-md transform hover:scale-105' 
-                      : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                      ? 'gradient-sandy hover:shadow-md text-warm-gray-900 shadow-sm transform hover:scale-105 font-medium' 
+                      : 'bg-beige-100 text-warm-gray-400 cursor-not-allowed'
                   }`}
                   disabled={!value.trim() || disabled}
                 >
@@ -115,7 +115,7 @@ const ChatInput = ({
             
             {/* AI Enhancement Indicator */}
             {value && (
-              <div className="absolute -top-8 left-4 flex items-center gap-2 text-xs text-blue-600">
+              <div className="absolute -top-8 left-4 flex items-center gap-2 text-xs text-sandy-600">
                 <Sparkles size={14} className="animate-pulse" />
                 <span>AI enhanced</span>
               </div>
@@ -124,7 +124,7 @@ const ChatInput = ({
         </form>
         
         {/* Footer Info */}
-        <div className="flex justify-center items-center mt-3 text-xs text-gray-500">
+        <div className="flex justify-center items-center mt-3 text-xs text-warm-gray-500">
           <span>Press Enter to send • Shift+Enter for new line</span>
         </div>
       </div>
