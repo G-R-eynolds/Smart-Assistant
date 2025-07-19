@@ -1,3 +1,7 @@
+# UIDesign files - exclude from repository
+UIDesignSecondDraft.html
+UIDesignSecondDraft_files/
+
 # Environment variables
 .env
 backend/.env
