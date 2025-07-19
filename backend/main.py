@@ -8,7 +8,7 @@ from langchain_chroma import Chroma
 from langchain.chains import RetrievalQA
 
 # Load environment variables
-load_dotenv()
+load_dotenv(dotenv_path="../.env")
 
 # Create FastAPI app instance
 app = FastAPI(title="Smart Assistant API", version="1.0.0")
