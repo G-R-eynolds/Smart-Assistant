@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import Sidebar from './components/Sidebar';
-import ActionBar from './components/ActionBar';
+import Header from './components/Header';
+import ChatArea from './components/ChatArea';
 import ChatInput from './components/ChatInput';
-import ChatMessage from './components/ChatMessage';
 
 function App() {
   // State for current user input
@@ -13,16 +13,21 @@ function App() {
   const [chatHistory, setChatHistory] = useState([
     {
       sender: 'ai',
-      text: 'Hello! I\'m your Smart Assistant. How can I help you today?'
+      text: 'Hello! I\'m your Smart Assistant. I can help you search for jobs, provide daily news updates, or answer any questions you might have. What would you like to do today?'
     }
   ]);
 
   // Session ID for conversation continuity
   const [sessionId] = useState(() => 'session_' + Date.now());
 
+  // Loading state
+  const [isLoading, setIsLoading] = useState(false);
+
   // Async function to handle sending messages
   const handleSend = async (userMessage) => {
     try {
+      setIsLoading(true);
+      
       // First add the user's message to chat history
       const userMessageObj = { sender: 'user', text: userMessage };
       setChatHistory(prev => [...prev, userMessageObj]);
@@ -45,17 +50,8 @@ function App() {
         text: 'Sorry, I encountered an error while processing your request. Please try again.' 
       };
       setChatHistory(prev => [...prev, errorMessage]);
-    }
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (currentInput.trim()) {
-      // Call the handleSend function with the current input
-      handleSend(currentInput);
-      
-      // Clear input
-      setCurrentInput('');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -97,7 +93,7 @@ function App() {
       setChatHistory([
         {
           sender: 'ai',
-          text: 'Hello! I\'m your Smart Assistant. How can I help you today?'
+          text: 'Hello! I\'m your Smart Assistant. I can help you search for jobs, provide daily news updates, or answer any questions you might have. What would you like to do today?'
         }
       ]);
       
@@ -107,69 +103,82 @@ function App() {
     }
   };
 
+  // Handle job scraping
+  const handleScrapeJobs = async () => {
+    try {
+      setIsLoading(true);
+      
+      // Add system message about starting job search
+      const systemMessage = { 
+        sender: 'ai', 
+        text: 'Starting job search... This may take a few moments while I scrape and analyze job postings.' 
+      };
+      setChatHistory(prev => [...prev, systemMessage]);
+
+      const response = await axios.post('http://127.0.0.1:8000/api/jobs/run-search');
+      
+      // Add results message
+      const resultsMessage = { 
+        sender: 'ai', 
+        text: response.data.message 
+      };
+      setChatHistory(prev => [...prev, resultsMessage]);
+      
+    } catch (error) {
+      console.error('Error scraping jobs:', error);
+      const errorMessage = { 
+        sender: 'ai', 
+        text: 'Sorry, I encountered an error while searching for jobs. Please try again.' 
+      };
+      setChatHistory(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle new conversation
+  const handleNewConversation = () => {
+    setChatHistory([
+      {
+        sender: 'ai',
+        text: 'Hello! I\'m your Smart Assistant. I can help you search for jobs, provide daily news updates, or answer any questions you might have. What would you like to do today?'
+      }
+    ]);
+    setCurrentInput('');
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50">
+    <div className="min-h-screen bg-gray-25">
       <div className="flex h-screen">
         {/* Sidebar */}
         <Sidebar 
-          userName="Alex Morgan"
+          onNewConversation={handleNewConversation}
           conversationHistory={chatHistory
             .filter(message => message.sender === 'user')
             .map((message, index) => ({
               id: index + 1,
-              title: message.text.length > 30 ? message.text.substring(0, 30) + '...' : message.text,
-              timestamp: 'Today'
+              title: message.text.length > 40 ? message.text.substring(0, 40) + '...' : message.text,
+              timestamp: 'Today',
+              preview: message.text
             }))
           }
         />
         
         {/* Main Content */}
-        <div id="main-content" className="flex-grow flex flex-col h-full bg-white/70 backdrop-blur-sm">
-          {/* Action Bar */}
-          <ActionBar 
+        <div className="flex-1 flex flex-col bg-white">
+          {/* Header */}
+          <Header 
             onSaveConversation={handleSaveConversation}
-            onScrapeJobs={() => console.log('Scrape jobs clicked')}
-            onOpenAirtableDatabase={() => console.log('Airtable database clicked')}
+            onScrapeJobs={handleScrapeJobs}
+            onOpenAirtableDatabase={() => window.open('https://airtable.com', '_blank')}
+            isLoading={isLoading}
           />
           
           {/* Chat Area */}
-          <div id="chat-area" className="flex-grow overflow-y-auto p-6 bg-gradient-to-b from-transparent to-white/20">
-            <div className="max-w-4xl mx-auto">
-              {/* Welcome Message */}
-              <div className="mb-8 text-center">
-                <h1 className="text-3xl font-bold text-gray-800 mb-4">Smart Assistant</h1>
-                <p className="text-gray-600 text-lg mb-6">Ask me anything about job searching, news, or how I can help you today.</p>
-                
-                {/* Quick Action Pills */}
-                {chatHistory.length <= 1 && (
-                  <div className="flex flex-wrap justify-center gap-3 mb-8">
-                    <button className="px-4 py-2 bg-white/80 backdrop-blur-sm border border-gray-200 rounded-full text-sm text-gray-700 hover:bg-white hover:shadow-md transition-all duration-200">
-                      Search for jobs
-                    </button>
-                    <button className="px-4 py-2 bg-white/80 backdrop-blur-sm border border-gray-200 rounded-full text-sm text-gray-700 hover:bg-white hover:shadow-md transition-all duration-200">
-                      Read news digest
-                    </button>
-                    <button className="px-4 py-2 bg-white/80 backdrop-blur-sm border border-gray-200 rounded-full text-sm text-gray-700 hover:bg-white hover:shadow-md transition-all duration-200">
-                      Resume help
-                    </button>
-                  </div>
-                )}
-              </div>
-              
-              {/* Conversation Thread */}
-              <div id="conversation-thread" className="space-y-6">
-                {chatHistory.map((message, index) => (
-                  <ChatMessage 
-                    key={index} 
-                    message={{
-                      sender: message.sender === 'ai' ? 'assistant' : message.sender,
-                      text: message.text
-                    }} 
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
+          <ChatArea 
+            chatHistory={chatHistory}
+            isLoading={isLoading}
+          />
           
           {/* Chat Input */}
           <ChatInput 
@@ -179,6 +188,7 @@ function App() {
               handleSend(userMessage);
               setCurrentInput('');
             }}
+            disabled={isLoading}
           />
         </div>
       </div>

@@ -6,12 +6,18 @@ const ChatMessage = ({ message }) => {
 
   if (sender === 'assistant') {
     return (
-      <div className="flex items-start space-x-4 mb-6">
-        <div className="w-10 h-10 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0 shadow-md">
-          <Bot size={20} className="text-white" />
+      <div className="flex items-start gap-4 animate-fade-in">
+        <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+          <Bot size={20} className="text-blue-600" />
         </div>
-        <div className="bg-white/80 backdrop-blur-sm rounded-2xl rounded-tl-md p-4 shadow-md border border-gray-200/50 max-w-3xl">
-          <p className="text-gray-800 leading-relaxed">{text}</p>
+        <div className="card p-4 max-w-2xl">
+          <div className="prose prose-sm max-w-none">
+            {text.split('\n').map((line, index) => (
+              <p key={index} className="text-gray-800 leading-relaxed mb-2 last:mb-0">
+                {line}
+              </p>
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -19,12 +25,18 @@ const ChatMessage = ({ message }) => {
 
   if (sender === 'user') {
     return (
-      <div className="flex items-start justify-end space-x-4 mb-6">
-        <div className="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-2xl rounded-tr-md p-4 max-w-3xl shadow-md">
-          <p className="text-white leading-relaxed">{text}</p>
+      <div className="flex items-start justify-end gap-4 animate-fade-in">
+        <div className="bg-blue-600 rounded-2xl rounded-tr-lg p-4 max-w-2xl shadow-sm">
+          <div className="prose prose-sm max-w-none">
+            {text.split('\n').map((line, index) => (
+              <p key={index} className="text-white leading-relaxed mb-2 last:mb-0">
+                {line}
+              </p>
+            ))}
+          </div>
         </div>
-        <div className="w-10 h-10 rounded-full bg-gradient-to-r from-gray-400 to-gray-500 flex items-center justify-center flex-shrink-0 shadow-md">
-          <User size={20} className="text-white" />
+        <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0">
+          <User size={20} className="text-gray-600" />
         </div>
       </div>
     );
