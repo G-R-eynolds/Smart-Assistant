@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smart-assistant-backend"
+version = "0.1.0"
+description = "Unified Smart Assistant Backend"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Smart Assistant Team" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    # Core FastAPI and async dependencies
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+    
+    # Database dependencies
+    "sqlalchemy[asyncio]",
+    "asyncpg",
+    "alembic",
+    
+    # Vector database
+    "qdrant-client",
+    
+    # Redis for caching
+    "redis",
+    
+    # AI/ML dependencies
+    "google-generativeai",
+    "openai",
+    
+    # HTTP client
+    "httpx",
+    
+    # Authentication and security
+    "python-jose[cryptography]",
+    "passlib[bcrypt]",
+    
+    # PDF processing
+    "pdfplumber",
+    "PyPDF2",
+    
+    # Configuration management
+    "pydantic-settings",
+    "pydantic[email]",
+    "python-dotenv",
+    
+    # Logging
+    "structlog",
+    
+    # WebSocket client for Bright Data
+    "websockets",
+    
+    # Aiocache
+    "aiocache"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "black",
+    "isort",
+]
+
+[tool.pytest]
+testpaths = ["tests"]
+python_files = "test_*.py"
+
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+
+[tool.isort]
+profile = "black"
