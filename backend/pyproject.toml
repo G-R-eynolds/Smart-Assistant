@@ -40,6 +40,7 @@ dependencies = [
     
     # HTTP client
     "httpx",
+    "aiohttp",
     
     # Authentication and security
     "python-jose[cryptography]",
@@ -59,6 +60,9 @@ dependencies = [
     
     # WebSocket client for Bright Data
     "websockets",
+    
+    # Airtable integration
+    "pyairtable",
     
     # Aiocache
     "aiocache"

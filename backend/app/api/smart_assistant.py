@@ -9,14 +9,22 @@ Main router for Smart Assistant functionality, including:
 
 import logging
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
-from typing import Dict, Any, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 from app.functions import job_discovery, inbox_management, intelligence_briefing
+from app.core.linkedin_scraper_v2 import LinkedInScraperV2
+from app.core.airtable_client import airtable_client
+from app.core.gemini_client import gemini_client
+from app.core.cv_manager import cv_manager
+from app.core.job_deduplication import job_deduplication_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["smart-assistant"])
+
+# Initialize service instances
+linkedin_scraper_v2 = LinkedInScraperV2()
 
 # Mock authentication dependency - replace with actual auth in production
 async def get_current_user():
@@ -156,6 +164,229 @@ async def run_job_discovery(
             "status": "error",
             "message": f"Error processing job search: {str(e)}",
             "jobs": []
+        }
+
+
+@router.post("/jobs/search")
+async def search_jobs(
+    data: Dict[str, Any],
+    background_tasks: BackgroundTasks,
+    current_user: Dict = Depends(get_current_user)
+):
+    """Search for jobs using AI-powered keyword extraction, LinkedIn scraping, cover letters, and Airtable storage"""
+    try:
+        # Extract parameters from request
+        user_query = data.get("query", data.get("keywords", ""))  # Support both 'query' and 'keywords'
+        location_override = data.get("location", "")  # User can override location
+        experience_level_override = data.get("experience_level", "")  # User can override experience level
+        job_type_override = data.get("job_type", "")  # User can override job type
+        date_posted = data.get("date_posted", "week")
+        limit = data.get("limit", 25)
+        generate_cover_letters = data.get("generate_cover_letters", True)
+        save_to_airtable = data.get("save_to_airtable", True)
+        min_relevance_score = data.get("min_relevance_score", 0.7)  # Minimum relevance score to save
+        
+        if not user_query:
+            raise HTTPException(status_code=400, detail="Query or keywords are required")
+        
+        logger.info(f"Processing job search query: '{user_query}'")
+        
+        # Step 1: Use AI to extract optimized search keywords
+        logger.info("Extracting search keywords using AI...")
+        keyword_extraction = await gemini_client.extract_job_search_keywords(user_query)
+        
+        if keyword_extraction.get("success", False):
+            # Use AI-extracted parameters
+            keywords = keyword_extraction.get("keywords", user_query)
+            location = location_override or keyword_extraction.get("location", "")
+            experience_level = experience_level_override or keyword_extraction.get("experience_level", "")
+            job_type = job_type_override or keyword_extraction.get("job_type", "")
+            
+            logger.info(f"AI extracted - Keywords: '{keywords}', Location: '{location}', Level: '{experience_level}', Type: '{job_type}'")
+            if keyword_extraction.get("reasoning"):
+                logger.info(f"AI reasoning: {keyword_extraction['reasoning']}")
+        else:
+            # Fallback to original query
+            keywords = user_query
+            location = location_override
+            experience_level = experience_level_override
+            job_type = job_type_override
+            logger.warning(f"AI extraction failed, using original query: {keyword_extraction.get('error', 'Unknown error')}")
+        
+        # Step 2: Search LinkedIn with optimized keywords
+        logger.info(f"Searching LinkedIn with keywords: '{keywords}'")
+        jobs = await linkedin_scraper_v2.search_jobs(
+            keywords=keywords,
+            location=location,
+            experience_level=experience_level,
+            job_type=job_type,
+            date_posted=date_posted,
+            limit=limit
+        )
+        
+        # Add background task to process jobs (generate cover letters and save to Airtable)
+        if jobs:
+            background_tasks.add_task(
+                process_jobs_with_ai, 
+                jobs, 
+                generate_cover_letters,
+                save_to_airtable and airtable_client.is_configured(),
+                min_relevance_score
+            )
+            
+            cover_letter_msg = " and generating cover letters" if generate_cover_letters and gemini_client.is_configured() else ""
+            airtable_msg = f" Filtering by relevance >= {min_relevance_score} and saving to Airtable..." if save_to_airtable and airtable_client.is_configured() else " (Airtable not configured)"
+            
+            message = f"Found {len(jobs)} jobs matching your criteria{cover_letter_msg}.{airtable_msg}"
+        else:
+            message = "No jobs found matching your criteria"
+        
+        # Return immediate response with AI extraction info
+        return {
+            "status": "success",
+            "count": len(jobs),
+            "message": message,
+            "jobs": jobs,  # Jobs for immediate display
+            "ai_extraction": {
+                "original_query": user_query,
+                "extracted_keywords": keywords,
+                "extracted_location": location,
+                "extracted_experience_level": experience_level,
+                "extracted_job_type": job_type,
+                "ai_success": keyword_extraction.get("success", False),
+                "ai_reasoning": keyword_extraction.get("reasoning", ""),
+                "search_strategy": keyword_extraction.get("search_strategy", ""),
+                "fallback_used": keyword_extraction.get("fallback_used", False)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Job search error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error searching for jobs: {str(e)}"
+        )
+
+
+async def process_jobs_with_ai(
+    jobs: List[Dict[str, Any]], 
+    generate_cover_letters: bool, 
+    save_to_airtable: bool,
+    min_relevance_score: float = 0.7
+):
+    """
+    Background task to process jobs with AI, filter by relevance, and save to Airtable
+    
+    Args:
+        jobs: List of job dictionaries from LinkedIn scraper
+        generate_cover_letters: Whether to generate cover letters
+        save_to_airtable: Whether to save to Airtable
+        min_relevance_score: Minimum relevance score to save job (default: 0.7)
+    """
+    try:
+        # Step 1: Filter out duplicate jobs using database
+        new_jobs = await job_deduplication_service.process_jobs_with_deduplication(jobs)
+        
+        if not new_jobs:
+            logger.info("All jobs were duplicates, no processing needed")
+            return
+        
+        processed_jobs = []
+        filtered_jobs = []
+        
+        logger.info(f"Processing {len(new_jobs)} new jobs with AI analysis...")
+        
+        for i, job in enumerate(new_jobs, 1):
+            processed_job = job.copy()
+            
+            logger.info(f"Processing job {i}/{len(new_jobs)}: {job.get('title')} at {job.get('company')}")
+            
+            # Analyze job posting with relevance scoring (this includes CV matching)
+            if gemini_client.is_configured() and job.get("description"):
+                try:
+                    analysis_result = await gemini_client.analyze_job_posting(job["description"])
+                    processed_job["job_analysis"] = analysis_result
+                    
+                    # Extract relevance score from analysis
+                    if analysis_result.get("success") and "analysis" in analysis_result:
+                        relevance_score = analysis_result["analysis"].get("relevance_score", 0.0)
+                        processed_job["relevance_score"] = relevance_score
+                        
+                        logger.info(f"Job relevance score: {relevance_score:.2f} for {job.get('title')}")
+                        
+                        # Only process further if relevance score meets threshold
+                        if relevance_score >= min_relevance_score:
+                            logger.info(f"✅ Job passes relevance filter ({relevance_score:.2f} >= {min_relevance_score})")
+                            
+                            # Generate cover letter for high-relevance jobs
+                            if generate_cover_letters and gemini_client.is_configured():
+                                try:
+                                    cover_letter_result = await gemini_client.generate_cover_letter(
+                                        job_title=job.get("title", ""),
+                                        company=job.get("company", ""),
+                                        job_description=job.get("description", "")
+                                    )
+                                    processed_job["cover_letter"] = cover_letter_result
+                                    logger.info(f"Generated cover letter for {job.get('title')}")
+                                except Exception as e:
+                                    logger.error(f"Failed to generate cover letter for {job.get('title')}: {e}")
+                                    processed_job["cover_letter"] = {
+                                        "success": False,
+                                        "error": str(e),
+                                        "cover_letter": ""
+                                    }
+                            
+                            filtered_jobs.append(processed_job)
+                        else:
+                            logger.info(f"❌ Job filtered out ({relevance_score:.2f} < {min_relevance_score})")
+                    else:
+                        logger.warning(f"Failed to get relevance score for {job.get('title')}")
+                        processed_job["relevance_score"] = 0.0
+                        
+                except Exception as e:
+                    logger.error(f"Failed to analyze job posting for {job.get('title')}: {e}")
+                    processed_job["job_analysis"] = {
+                        "success": False,
+                        "error": str(e)
+                    }
+                    processed_job["relevance_score"] = 0.0
+            else:
+                processed_job["relevance_score"] = 0.0
+            
+            processed_jobs.append(processed_job)
+        
+        logger.info(f"Filtered {len(filtered_jobs)} out of {len(new_jobs)} jobs (relevance >= {min_relevance_score})")
+        
+        # Save only high-relevance jobs to Airtable if configured
+        if save_to_airtable and filtered_jobs:
+            logger.info(f"Saving {len(filtered_jobs)} high-relevance jobs to Airtable...")
+            result = await airtable_client.add_jobs(filtered_jobs)
+            logger.info(f"Airtable save result: {result}")
+            
+            # Mark successfully saved jobs as processed to avoid duplicates
+            if result.get("success"):
+                await job_deduplication_service.mark_jobs_as_processed(filtered_jobs)
+            
+        elif save_to_airtable:
+            logger.info("No jobs met relevance threshold - nothing saved to Airtable")
+            
+            # Even if no jobs passed the filter, mark all analyzed jobs as processed
+            # to avoid re-analyzing them in future runs
+            await job_deduplication_service.mark_jobs_as_processed(new_jobs)
+        
+        return {
+            "total_processed": len(processed_jobs),
+            "high_relevance_jobs": len(filtered_jobs),
+            "min_relevance_score": min_relevance_score,
+            "saved_to_airtable": save_to_airtable and len(filtered_jobs) > 0
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to process jobs with AI: {e}")
+        return {
+            "error": str(e),
+            "total_processed": 0,
+            "high_relevance_jobs": 0
         }
 
 
@@ -355,4 +586,74 @@ async def generate_intelligence_briefing(
                 "key_takeaways": [],
                 "generation_time_ms": 0
             }
+        }
+
+
+@router.get("/cv/info")
+async def get_cv_info():
+    """Get information about the current CV file"""
+    try:
+        cv_info = cv_manager.get_cv_info()
+        logger.info(f"CV info requested: {cv_info['exists']}")
+        return {
+            "status": "success",
+            "data": cv_info
+        }
+    except Exception as e:
+        logger.error(f"Error getting CV info: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "data": {"exists": False, "message": "Error checking CV file"}
+        }
+
+
+@router.get("/cv/summary")
+async def get_cv_summary():
+    """Get a summary of the CV content"""
+    try:
+        cv_summary = cv_manager.get_cv_summary()
+        logger.info(f"CV summary requested: {cv_summary['available']}")
+        return {
+            "status": "success",
+            "data": cv_summary
+        }
+    except Exception as e:
+        logger.error(f"Error getting CV summary: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "data": {"available": False, "message": "Error processing CV"}
+        }
+
+
+@router.post("/cv/refresh")
+async def refresh_cv_cache():
+    """Force refresh of the CV text cache"""
+    try:
+        cv_text = cv_manager.get_cv_text(force_refresh=True)
+        
+        if cv_text:
+            return {
+                "status": "success",
+                "message": "CV cache refreshed successfully",
+                "data": {
+                    "character_count": len(cv_text),
+                    "word_count": len(cv_text.split()),
+                    "refreshed": True
+                }
+            }
+        else:
+            return {
+                "status": "error",
+                "message": "Could not refresh CV - file not found or processing failed",
+                "data": {"refreshed": False}
+            }
+            
+    except Exception as e:
+        logger.error(f"Error refreshing CV cache: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "data": {"refreshed": False}
         }

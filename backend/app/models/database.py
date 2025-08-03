@@ -137,3 +137,16 @@ class IntelligenceBriefing(Base, TimestampMixin):
     
     # Relationship
     user = relationship("User")
+
+
+# Simple model to track processed job URLs to avoid duplicates
+class ProcessedJobUrl(Base, TimestampMixin):
+    __tablename__ = "processed_job_urls"
+    
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    url = Column(String, unique=True, index=True, nullable=False)  # Job URL
+    job_title = Column(String, nullable=True)  # Optional: store job title for reference
+    company = Column(String, nullable=True)    # Optional: store company for reference
+    
+    def __repr__(self):
+        return f"<ProcessedJobUrl(url='{self.url}', title='{self.job_title}')>"

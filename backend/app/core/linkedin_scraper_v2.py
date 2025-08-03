@@ -77,6 +77,11 @@ class LinkedInScraperV2:
             
             validated_jobs = self._validate_and_clean_jobs(jobs)
             
+            # Enhance jobs with full descriptions by visiting individual job URLs
+            if validated_jobs:
+                logger.info("Enhancing jobs with full descriptions from individual job pages")
+                validated_jobs = await self.enhance_jobs_with_full_descriptions(validated_jobs)
+            
             logger.info(f"Successfully scraped {len(validated_jobs)} jobs from LinkedIn")
             return validated_jobs
             
@@ -158,6 +163,184 @@ class LinkedInScraperV2:
         except Exception as e:
             logger.error(f"Error executing Node.js script: {e}")
             return []
+    
+    async def enhance_jobs_with_full_descriptions(self, jobs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Enhance jobs with full descriptions by visiting individual job URLs.
+        """
+        if not jobs:
+            return jobs
+        
+        logger.info(f"Enhancing {len(jobs)} jobs with full descriptions")
+        enhanced_jobs = []
+        
+        for i, job in enumerate(jobs, 1):
+            job_url = job.get('url', '')
+            if not job_url:
+                logger.warning(f"Job {i} has no URL, skipping description enhancement")
+                enhanced_jobs.append(job)
+                continue
+            
+            logger.info(f"Fetching full description for job {i}/{len(jobs)}: {job.get('title', 'Unknown')}")
+            logger.info(f"Job URL: {job_url}")
+            
+            try:
+                # Rate limiting between requests
+                await self._rate_limit()
+                
+                # Get full description from job page
+                full_description = await self._scrape_job_description(job_url)
+                
+                if full_description and len(full_description.strip()) > 50:
+                    job['description'] = full_description
+                    job['description_source'] = 'full_page'
+                    logger.info(f"✅ Enhanced job with full description ({len(full_description)} chars)")
+                else:
+                    job['description_source'] = 'search_page'
+                    logger.warning(f"⚠️ Could not get substantial full description for job {i} (got {len(full_description) if full_description else 0} chars)")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to enhance job {i} with full description: {e}")
+                job['description_source'] = 'search_page'
+            
+            enhanced_jobs.append(job)
+        
+        return enhanced_jobs
+    
+    async def _scrape_job_description(self, job_url: str) -> Optional[str]:
+        """
+        Scrape the full job description from a LinkedIn job page.
+        """
+        try:
+            logger.info(f"🔍 Generating Puppeteer script for: {job_url}")
+            script_content = self._generate_job_description_script(job_url)
+            
+            logger.info(f"🚀 Executing Puppeteer script...")
+            result = await self._execute_nodejs_script(script_content)
+            
+            if result and len(result) > 0:
+                if 'description' in result[0]:
+                    description = result[0]['description']
+                    if description and len(description.strip()) > 50:
+                        logger.info(f"✅ Successfully scraped description ({len(description)} chars)")
+                        return description
+                    else:
+                        logger.warning(f"⚠️ Description too short: {len(description) if description else 0} chars")
+                        return None
+                else:
+                    logger.warning(f"⚠️ No 'description' field in result: {list(result[0].keys()) if result[0] else 'empty result'}")
+                    return None
+            else:
+                logger.warning(f"⚠️ Empty or no result from Puppeteer script")
+                return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error scraping job description from {job_url}: {e}")
+            return None
+    
+    def _generate_job_description_script(self, job_url: str) -> str:
+        """
+        Generate a Puppeteer script to scrape job description from individual job page.
+        """
+        return f"""
+const puppeteer = require('puppeteer-core');
+
+async function scrapeJobDescription() {{
+    console.error('🚀 Starting job description scraper for: {job_url}');
+    
+    let browser;
+    try {{
+        // Connect to Bright Data's Scraping Browser
+        console.error('🌐 Connecting to Bright Data Scraping Browser...');
+        browser = await puppeteer.connect({{
+            browserWSEndpoint: '{self.websocket_endpoint}'
+        }});
+        console.error('✅ Connected to browser');
+        
+        // Create a new page
+        const page = await browser.newPage();
+        
+        // Set a realistic user agent
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
+        
+        // Navigate to job page
+        console.error('🌐 Navigating to job page...');
+        await page.goto('{job_url}', {{ 
+            waitUntil: 'networkidle2', 
+            timeout: 60000 
+        }});
+        console.error('✅ Job page loaded');
+        
+        // Wait for job description to appear
+        console.error('⏳ Waiting for job description...');
+        try {{
+            await page.waitForSelector('.description__text, .show-more-less-html__markup, .jobs-box__html-content, .jobs-description__content', {{ 
+                timeout: 30000 
+            }});
+            console.error('✅ Job description found');
+        }} catch (e) {{
+            console.error('⚠️ No job description found, proceeding anyway...');
+        }}
+        
+        // Extract job description
+        console.error('📊 Extracting job description...');
+        const description = await page.evaluate(() => {{
+            // Try multiple selectors for job description
+            const descriptionSelectors = [
+                '.description__text',
+                '.show-more-less-html__markup',
+                '.jobs-box__html-content', 
+                '.jobs-description__content',
+                '.jobs-description',
+                '.job-description',
+                '[data-testid="job-description"]'
+            ];
+            
+            for (const selector of descriptionSelectors) {{
+                const element = document.querySelector(selector);
+                if (element) {{
+                    // Get text content and clean it up
+                    let text = element.textContent || element.innerText || '';
+                    
+                    // Clean up whitespace and formatting
+                    text = text.replace(/\\s+/g, ' ').trim();
+                    
+                    if (text.length > 100) {{ // Make sure we got substantial content
+                        console.log(`Found description with selector: ${{selector}} (${{text.length}} chars)`);
+                        return text;
+                    }}
+                }}
+            }}
+            
+            console.log('No substantial job description found');
+            return '';
+        }});
+        
+        console.error(`✅ Extracted description (${{description.length}} characters)`);
+        
+        // Output the result as JSON
+        const result = [{{
+            url: '{job_url}',
+            description: description,
+            scraped_at: new Date().toISOString()
+        }}];
+        
+        console.log(JSON.stringify(result));
+        
+    }} catch (error) {{
+        console.error('❌ Error occurred:', error.message);
+        console.log(JSON.stringify([])); // Return empty array on error
+    }} finally {{
+        if (browser) {{
+            await browser.close();
+            console.error('👋 Browser closed');
+        }}
+    }}
+}}
+
+// Run the scraper
+scrapeJobDescription();
+"""
 
     def _generate_puppeteer_script(self, search_url: str, limit: int) -> str:
         """
@@ -208,7 +391,7 @@ async function scrapeLinkedIn() {{
         console.error('📜 Scrolling to load more jobs...');
         for (let i = 0; i < 3; i++) {{
             await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-            await page.waitForTimeout(2000);
+            await new Promise(resolve => setTimeout(resolve, 2000));
         }}
         
         // Extract job data

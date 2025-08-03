@@ -51,6 +51,19 @@ class Settings:
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     
+    # Gemini API settings
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    
+    # CV and Cover Letter settings
+    CV_DIRECTORY: str = os.getenv("CV_DIRECTORY", "data/cv")
+    CV_FILENAME: str = os.getenv("CV_FILENAME", "cv.pdf")
+    COVER_LETTER_STYLE_PROMPT: str = os.getenv("COVER_LETTER_STYLE_PROMPT", 
+        "Write a professional, engaging cover letter that is concise yet comprehensive. "
+        "The tone should be confident but not arrogant, enthusiastic but professional. "
+        "Focus on relevant experience and skills that match the job requirements. "
+        "Keep it to 3-4 paragraphs maximum. Avoid generic phrases and make it specific to the role.")
+    
     # CORS settings
     CORS_ALLOW_ORIGIN: str = os.getenv("CORS_ALLOW_ORIGIN", "http://localhost:5173")
     
@@ -70,6 +83,12 @@ class Settings:
     BRIGHT_DATA_PASSWORD: str = os.getenv("BRIGHT_DATA_PASSWORD", "")
     BRIGHT_DATA_HOST: str = os.getenv("BRIGHT_DATA_HOST", "brd.superproxy.io")
     BRIGHT_DATA_PORT: int = int(os.getenv("BRIGHT_DATA_PORT", "22225"))
+    BRIGHT_DATA_ENDPOINT: str = os.getenv("BRIGHT_DATA_ENDPOINT", "")
+    
+    # Airtable settings
+    AIRTABLE_API_KEY: str = os.getenv("AIRTABLE_API_KEY", "")
+    AIRTABLE_BASE_ID: str = os.getenv("AIRTABLE_BASE_ID", "")
+    AIRTABLE_TABLE_NAME: str = os.getenv("AIRTABLE_TABLE_NAME", "Jobs")
 
 # Create a global instance of settings
 settings = Settings()
