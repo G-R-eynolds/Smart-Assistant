@@ -48,6 +48,7 @@ class Pipeline:
         max_emails_display: int = 10
         privacy_mode: bool = True
         log_level: str = "INFO"
+        LOG_LEVEL: str = "INFO"
     
     def __init__(self):
         self.type = "filter"
@@ -88,7 +89,7 @@ class Pipeline:
             Modified body with email summary injected (if applicable)
         """
         try:
-            if not self.valves.ENABLED:
+            if not self.valves.enabled:
                 return body
             
             # Extract the last user message
@@ -97,6 +98,22 @@ class Pipeline:
                 return body
             
             last_message = messages[-1]
+            
+            # Skip if not a dictionary or not a user message
+            if not isinstance(last_message, dict) or last_message.get("role") != "user":
+                return body
+                
+            message_content = last_message.get("content", "")
+            
+            # Skip system-generated messages
+            if (message_content.startswith("### Task:") or 
+                message_content.startswith("### Follow-up") or
+                "suggest" in message_content.lower() and "follow-up" in message_content.lower()):
+                return body
+            
+            # Check if this contains email-related triggers
+            if not self._contains_email_trigger(message_content):
+                return body
             message_content = last_message.get("content", "").lower()
             
             # Check if message contains email-related triggers

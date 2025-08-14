@@ -6,8 +6,9 @@ and other AI-powered features.
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import aiohttp
+import asyncio
 import json
 import structlog
 from datetime import datetime
@@ -35,6 +36,83 @@ class GeminiClient:
     def is_configured(self) -> bool:
         """Check if Gemini is properly configured."""
         return bool(self.api_key)
+
+    async def _post_json(self, url: str, payload: dict, *, timeout: float = 20.0, max_retries: int = 2) -> Optional[dict]:
+        """Internal helper to POST JSON with simple exponential backoff and timeout."""
+        if not self.is_configured():
+            return None
+        backoff = 1.0
+        for attempt in range(max_retries + 1):
+            try:
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+                    async with session.post(url, headers={"Content-Type": "application/json"}, params={"key": self.api_key}, json=payload) as resp:
+                        if resp.status != 200:
+                            text = await resp.text()
+                            logger.warning("gemini_http_error status=%d body=%s attempt=%d", resp.status, text[:300], attempt)
+                        else:
+                            return await resp.json()
+            except asyncio.TimeoutError:
+                logger.warning("gemini_timeout attempt=%d", attempt)
+            except Exception as e:
+                logger.error("gemini_post_exception attempt=%d error=%s", attempt, e)
+            if attempt < max_retries:
+                await asyncio.sleep(backoff)
+                backoff *= 2
+        return None
+
+    async def extract_entities_relations(self, text: str) -> Dict[str, Any]:
+        """Extract entities and relations as JSON using the configured Gemini model."""
+        if not self.is_configured():
+            return {"success": False, "error": "Gemini not configured"}
+
+        prompt = (
+            "Extract entities and relationships from the text. Return STRICT JSON with keys 'entities' and 'relations'.\n"
+            "Schema: {\"entities\":[{\"name\":str,\"type\":str,\"description\"?:str}],"
+            "\"relations\":[{\"source\":str,\"target\":str,\"type\":str,\"confidence\"?:number}]}\n"
+            "Text:\n" + text[:6000]
+        )
+
+        try:
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.1, "maxOutputTokens": 800},
+            }
+            url = f"{self.base_url}/models/{self.model}:generateContent"
+            result = await self._post_json(url, payload, timeout=30.0)
+            if not result:
+                return {"success": False, "error": "No response from Gemini after retries"}
+            if "candidates" not in result or not result["candidates"]:
+                return {"success": False, "error": "No candidates in response"}
+            content = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+            content = content.replace("```json", "").replace("```", "").strip()
+            data = json.loads(content)
+            entities = data.get("entities", [])
+            relations = data.get("relations", [])
+            return {"success": True, "entities": entities, "relations": relations}
+        except Exception as e:
+            logger.error(f"Gemini entity extraction failed: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def embed_texts(self, texts: List[str], model: str = "text-embedding-004") -> Optional[List[List[float]]]:
+        """Get embeddings from Gemini text-embedding-004. Returns list of vectors or None on failure."""
+        if not self.is_configured() or not texts:
+            return None
+        try:
+            url = f"{self.base_url}/models/{model}:batchEmbedContents"
+            payload = {
+                "requests": [
+                    {"model": f"models/{model}", "content": {"parts": [{"text": t[:6000]}]}}
+                    for t in texts
+                ]
+            }
+            result = await self._post_json(url, payload, timeout=40.0)
+            if not result:
+                return None
+            embeddings = result.get("embeddings", [])
+            return [e.get("values") for e in embeddings if isinstance(e, dict)]
+        except Exception as e:
+            logger.error(f"Gemini embeddings failed: {e}")
+            return None
     
     async def extract_job_search_keywords(
         self, 
@@ -510,6 +588,71 @@ Analyze now:
                 "success": False,
                 "error": f"Failed to analyze job posting: {str(e)}"
             }
+
+    async def generate_study_answer(self, question: str, context: str) -> Optional[str]:
+        """Lightweight helper: generate an answer from provided context for study use."""
+        if not self.is_configured() or not context:
+            return None
+        prompt = (
+            "You are a helpful study assistant. Use the provided context to answer the question. "
+            "Be concise and cite key concepts. If uncertain, say so.\n\n"
+            f"Question: {question}\n\nContext:\n{context}"
+        )
+        try:
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
+            }
+            url = f"{self.base_url}/models/{self.model}:generateContent"
+            result = await self._post_json(url, payload, timeout=25.0)
+            if not result:
+                return None
+            if "candidates" in result and result["candidates"]:
+                return result["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except Exception as e:
+            logger.error(f"Gemini study answer failed: {e}")
+        return None
+
+    async def summarize_cluster(self, prompt: str, max_tokens: int = 180) -> Dict[str, str]:
+        """Generate a concise label and summary for a cluster.
+
+        Expects the model to return JSON with keys label and summary. Falls back to simple
+        heuristic extraction if JSON parsing fails.
+        """
+        if not self.is_configured():
+            return {"label": "Cluster", "summary": "Gemini not configured."}
+        try:
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.3, "maxOutputTokens": max(32, min(max_tokens, 256))},
+            }
+            url = f"{self.base_url}/models/{self.model}:generateContent"
+            result = await self._post_json(url, payload, timeout=30.0)
+            if not result or "candidates" not in result or not result["candidates"]:
+                return {"label": "Cluster", "summary": "No response from model."}
+            text = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+            # Clean markdown fences
+            cleaned = text.replace("```json", "").replace("```", "").strip()
+            import json as _json, re as _re
+            # Attempt direct JSON parse
+            try:
+                data = _json.loads(cleaned)
+            except Exception:
+                # Try to locate a JSON object substring
+                m = _re.search(r"\{.*?\}" , cleaned, _re.DOTALL)
+                if m:
+                    try:
+                        data = _json.loads(m.group(0))
+                    except Exception:
+                        data = {}
+                else:
+                    data = {}
+            label = str(data.get("label") or data.get("title") or "Cluster")[:120]
+            summary = str(data.get("summary") or data.get("text") or text[:400]).strip()
+            return {"label": label, "summary": summary}
+        except Exception as e:
+            logger.warning(f"Gemini cluster summarization failed: {e}")
+            return {"label": "Cluster", "summary": "Heuristic fallback due to error."}
 
 
 # Global instance for use across the application

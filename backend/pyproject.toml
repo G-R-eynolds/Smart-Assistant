@@ -7,14 +7,13 @@ name = "smart-assistant-backend"
 version = "0.1.0"
 description = "Unified Smart Assistant Backend"
 readme = "README.md"
-requires-python = ">=3.9"
-license = { file = "LICENSE" }
+requires-python = ">=3.10,<3.13"
+license = "MIT"
 authors = [
     { name = "Smart Assistant Team" }
 ]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 dependencies = [
@@ -27,6 +26,7 @@ dependencies = [
     "sqlalchemy[asyncio]",
     "asyncpg",
     "alembic",
+    "aiosqlite",
     
     # Vector database
     "qdrant-client",
@@ -66,7 +66,21 @@ dependencies = [
     
     # Aiocache
     "aiocache"
+    ,"neo4j"
+    ,"networkx"
+    ,"numpy"
+    ,"pandas"
+    ,"pyarrow"
+    ,"graphrag==2.4.0"  # Pinned GraphRAG version compatible with Python <3.13
 ]
+
+[project.scripts]
+smartctl = "app.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "scripts*"]
+exclude = ["data*", "node_modules*", "tests*"]
 
 [project.optional-dependencies]
 dev = [

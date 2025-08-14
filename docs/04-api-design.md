@@ -2,92 +2,87 @@
 
 ## Overview
 
-This document defines the API architecture for the Smart Assistant. The system exposes a multi-faceted API that includes a primary **RESTful interface** for standard resource management, a **GraphQL endpoint** for complex data queries, and a **WebSocket connection** for real-time, bidirectional communication. This hybrid approach ensures flexibility, performance, and a rich developer experience.
+The Smart Assistant exposes a simple REST API used primarily by Open WebUI Pipelines. There is no GraphQL or WebSocket layer. Endpoints are versioned by path segments and grouped under `/api/smart-assistant` for feature routes, with a few compatibility endpoints for Open WebUI under `/api` and `/api/v1`.
 
 ## Core Principles
 
-1.  **REST for Simplicity**: Utilize standard RESTful conventions (HTTP verbs, status codes, resource-based URLs) for all primary create, read, update, and delete (CRUD) operations.
-2.  **GraphQL for Flexibility**: Provide a GraphQL endpoint to allow clients to request exactly the data they need, reducing over-fetching and enabling complex data aggregation in a single request.
-3.  **WebSockets for Real-Time**: Use WebSockets to push real-time updates from the server to the client (e.g., task completions, new job alerts) without the need for polling.
-4.  **Security First**: All API endpoints are protected through robust authentication and authorization mechanisms. Access is granted on a need-to-know basis using scoped permissions.
-5.  **Clear Versioning**: The API is versioned (e.g., `/api/v1/`) to allow for future changes without breaking existing client integrations.
+1. REST-first: Standard HTTP verbs, status codes, and JSON bodies.
+2. Minimal surface: Only endpoints needed by pipelines and basic admin flows.
+3. Async by default: FastAPI with async handlers for I/O-bound work.
+4. Clear versioning: Namespace feature endpoints under `/api/smart-assistant`.
+5. Pragmatic security: Bearer auth placeholder today; tighten in production.
 
-## API Architecture
+## Authentication & CORS
 
-### 1. RESTful API
--   **Purpose**: The workhorse for all standard interactions with the system's resources.
--   **Structure**: Follows a logical, resource-oriented structure (e.g., `/users`, `/jobs`, `/agents`).
--   **Authentication**: All requests must be authenticated using a JSON Web Token (JWT) passed in the `Authorization` header.
+- Auth: Bearer token in `Authorization: Bearer <token>`. The demo build accepts a mock token and returns a demo user. Replace with real JWT verification in production.
+- CORS: Wide-open in development (`allow_origins=["*"]`). Restrict to your Open WebUI origin in production.
 
-### 2. GraphQL Endpoint
--   **Purpose**: To serve complex queries from the front-end application, allowing it to fetch nested data from multiple resources in a single API call.
--   **Endpoint**: A single endpoint (e.g., `/graphql`) handles all GraphQL queries and mutations.
--   **Use Cases**: Ideal for dashboards, detailed views, and analytics that require data from various parts of the system.
+## Open WebUI Compatibility Endpoints
 
-### 3. WebSocket API
--   **Purpose**: To provide a persistent, low-latency connection for real-time updates.
--   **Endpoint**: A dedicated WebSocket endpoint (e.g., `/ws`) manages connections.
--   **Use Cases**: Pushing notifications for new job discoveries, agent task status changes, and when a new daily briefing is ready.
+- GET `/api/health` → `{ status: true }`
+- GET `/api/config` → Open WebUI boot config
+- GET `/api/models` → List of pseudo models (used to surface pipelines)
+- Auth stubs under `/api/v1/auths/*` for local login/signup during demos
 
-## Security & Access Control
+These exist to make Open WebUI happy; they are not the primary integration points.
 
--   **Authentication**: The system uses **JWT-based authentication**. Users log in with credentials to receive a short-lived access token, which must be included in all subsequent API requests.
--   **Authorization**: Access to resources is governed by a **scope-based system**. Tokens are issued with specific permissions (e.g., `jobs:read`, `content:create`), and endpoints will reject requests from tokens that lack the required scope.
--   **Rate Limiting**: To ensure system stability and fair usage, the API implements rate limiting based on the user's subscription tier and IP address.
--   **Quota Management**: In addition to rate limiting, resource-intensive operations (like requests to the AI models) are subject to monthly quotas based on the user's plan.
+## Smart Assistant Endpoints
 
-## REST API Endpoint Definitions
+Base path: `/api/smart-assistant`
 
-The following is a high-level overview of the available RESTful resources and their primary functions.
+1) GET `/health`
+- Purpose: Liveness for the Smart Assistant feature set
+- Response: `{ status: "healthy", timestamp: <iso>, components: { job_discovery: bool, inbox_management: bool, intelligence_briefing: bool } }`
 
-### `/auth`
--   **Purpose**: Handles user authentication.
--   `POST /token`: Exchange user credentials for a JWT access token.
+2) POST `/jobs/search`
+- Purpose: Run the job search flow (AI keyword extraction → LinkedIn scrape → optional background AI analysis + Airtable save)
+- Request JSON (selected fields):
+	- `query` or `keywords` (string, required)
+	- `location` (string, optional)
+	- `experience_level` (string, optional)
+	- `job_type` (string, optional)
+	- `date_posted` (string, default "week")
+	- `limit` (int, default 25)
+	- `generate_cover_letters` (bool, default true)
+	- `save_to_airtable` (bool, default true)
+	- `min_relevance_score` (float, default 0.7)
+- Response JSON (selected fields):
+	- `status` ("success")
+	- `count` (int)
+	- `message` (string)
+	- `jobs` (array of job objects)
+	- `ai_extraction` (object with extracted parameters and reasoning)
 
-### `/users`
--   **Purpose**: Manages user accounts and their associated profiles and preferences.
--   `GET /users/me`: Retrieve the profile of the currently authenticated user.
--   `PUT /users/me`: Update the profile of the currently authenticated user.
--   `GET /users/me/preferences`: Retrieve the user's application preferences.
--   `PUT /users/me/preferences`: Update the user's application preferences.
+3) POST `/inbox/process`
+- Purpose: Process inbox (categorize/summarize). Uses pipeline when configured; falls back to mock data for demos.
+- Request JSON: `{ credentials: {...}, filters: {...} }`
+- Response JSON: `{ status: "success", data: { unread_count, total_emails, important_emails, categories, action_items, processing_time_ms } }`
 
-### `/agents`
--   **Purpose**: Manages and interacts with the AI agents.
--   `POST /agents/tasks`: Submit a new asynchronous task to a specified agent (e.g., "find new jobs").
--   `GET /agents/tasks/{task_id}`: Check the status and retrieve the results of a previously submitted task.
--   `GET /agents/status`: Get the current operational status and load of all agents.
+4) POST `/briefing/generate`
+- Purpose: Generate an intelligence briefing using the pipeline (falls back to demo data)
+- Request JSON: `{ preferences: {...} }`
+- Response JSON: `{ status, data: { generated_at, news_items, market_data, tech_trends, career_insights, key_takeaways, generation_time_ms } }`
 
-### `/jobs`
--   **Purpose**: Manages the job opportunities discovered for the user.
--   `GET /jobs`: Retrieve a list of jobs, with support for filtering by status, location, etc.
--   `GET /jobs/{job_id}`: Get the detailed information for a single job.
--   `PUT /jobs/{job_id}`: Update the status of a job (e.g., from 'new' to 'applied').
+5) POST `/job-discovery/run`
+- Purpose: Legacy/dev helper to run the discovery pipeline directly
+- Request JSON: `{ query: "..." }`
+- Response JSON: `{ status, message, jobs }`
 
-### `/content`
--   **Purpose**: Manages the generation of personalized content.
--   `POST /content/generate`: Request the `ContentAgent` to generate content, such as a tailored CV for a specific job.
--   `GET /content/history`: Retrieve a log of previously generated content.
+6) CV Utilities
+- GET `/cv/info` → status of current CV file
+- GET `/cv/summary` → summary of cached CV text
+- POST `/cv/refresh` → refresh the CV text cache
 
-### `/briefings`
--   **Purpose**: Manages the creation and retrieval of user briefings.
--   `GET /briefings/latest`: Retrieve the most recent daily briefing for the user.
--   `GET /briefings/{briefing_id}`: Retrieve a specific briefing by its ID.
+## Errors
 
-### `/memories`
--   **Purpose**: Provides an interface to the system's semantic memory.
--   `GET /memories/search`: Perform a semantic search across the user's memories using a natural language query.
--   `POST /memories`: Manually add a new piece of information to the user's memory.
+- Validation: 400 with `{ "detail": "..." }` when required fields are missing
+- Server errors: 500 with `{ "detail": "..." }` (FastAPI default) or `{ status: "error", message|error: "..." }` in some handlers
+- Pipelines should surface a concise error message to the user
 
-## External Integrations (Webhooks)
+## OpenAPI Docs
 
--   **Purpose**: To receive real-time updates from external services.
--   `POST /webhooks/gmail`: An endpoint designed to receive push notifications from the Gmail API when a new email arrives for the user. This triggers the `EmailAgent`.
--   **Security**: All webhook endpoints are secured and must be registered with the external service. Incoming requests are verified to ensure they originate from the trusted source.
-
-## API Documentation
-
-The entire API, including the REST, GraphQL, and WebSocket interfaces, will be formally documented using the **OpenAPI specification**. This documentation will be made available to developers through an interactive web UI (e.g., Swagger UI), providing clear examples, schema definitions, and a way to test endpoints directly from the browser.
+Interactive API docs are available at `/docs` (Swagger UI) and `/openapi.json`.
 
 ---
 
-**Next**: Review [Epic 1: Job Opportunity Pipeline](./05-job-pipeline.md) for detailed job discovery and management workflows.
+Next: Review [Epic 1: Job Opportunity Pipeline](./05-job-pipeline.md) for the end-to-end search and processing flow.

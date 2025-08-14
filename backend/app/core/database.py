@@ -51,6 +51,13 @@ async def init_db():
     # Create tables if they don't exist
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Phase 3 lightweight migration: ensure new columns exist (SQLite only)
+        if database_url.startswith('sqlite+'):
+            # Check if namespace column exists in graphrag_nodes
+            res = await conn.exec_driver_sql("PRAGMA table_info(graphrag_nodes)")
+            cols = [r[1] for r in res.fetchall()]
+            if 'namespace' not in cols:
+                await conn.exec_driver_sql("ALTER TABLE graphrag_nodes ADD COLUMN namespace VARCHAR")
     
     logger.info("Database initialized successfully")
 

@@ -17,12 +17,13 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 5
+    profiles:
+      - data
 
   # Qdrant Vector Database
   qdrant:
@@ -51,6 +52,8 @@ services:
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
+    profiles:
+      - data
     
   # Smart Assistant Backend
   backend:
@@ -59,64 +62,45 @@ services:
       dockerfile: Dockerfile
     container_name: smart-assistant-backend
     depends_on:
-      - postgres
-      - qdrant
-      - redis
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_started
     ports:
       - "8000:8000"
     volumes:
       - ./backend/app:/app/app
       - ./backend/.env:/app/.env
     environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/smart_assistant
+      - DATABASE_URL=sqlite:///data/webui.db
       - QDRANT_URL=http://qdrant:6333
       - REDIS_URL=redis://redis:6379
     restart: unless-stopped
     
-  # Smart Assistant Frontend
-  frontend:
+  # Open WebUI (collocated front+backend)
+  webui:
     build:
-      context: ./frontend
+      context: ./original-openwebui
       dockerfile: Dockerfile
-    container_name: smart-assistant-frontend
+    container_name: smart-assistant-webui
     depends_on:
       - backend
-    ports:
-      - "80:80"
     environment:
-      - BACKEND_URL=http://backend:8000
+      - PORT=8080
+      - OPENAI_API_BASE_URL=
+      - WEBUI_SECRET_KEY=dev
+      - SMART_ASSISTANT_URL=http://backend:8000
+    ports:
+      - "8080:8080"
     volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
+      - ./original-openwebui/backend/data:/app/backend/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
       retries: 5
-
-  # Backend API (for development)
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: base
-    container_name: smart-assistant-api
-    ports:
-      - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/smart_assistant
-      - QDRANT_URL=http://qdrant:6333
-      - REDIS_URL=redis://redis:6379/0
-      - ENVIRONMENT=development
-    depends_on:
-      - postgres
-      - qdrant  
-      - redis
-    volumes:
-      - ./app:/app/app
-      - ./.env:/app/.env
-    profiles:
-      - full-stack
 
 volumes:
   postgres_data:

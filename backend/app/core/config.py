@@ -56,7 +56,7 @@ class Settings:
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
     
     # CV and Cover Letter settings
-    CV_DIRECTORY: str = os.getenv("CV_DIRECTORY", "data/cv")
+    CV_DIRECTORY: str = os.getenv("CV_DIRECTORY", "/home/gabe/Documents/Agent Project 2.0/backend/data/cv")
     CV_FILENAME: str = os.getenv("CV_FILENAME", "cv.pdf")
     COVER_LETTER_STYLE_PROMPT: str = os.getenv("COVER_LETTER_STYLE_PROMPT", 
         "Write a professional, engaging cover letter that is concise yet comprehensive. "
@@ -74,6 +74,29 @@ class Settings:
     
     # Feature flags
     ENABLE_RAG_CHAT: bool = os.getenv("ENABLE_RAG_CHAT", "true").lower() == "true"
+    ENABLE_GRAPHRAG: bool = os.getenv("ENABLE_GRAPHRAG", "true").lower() == "true"
+    GRAPHRAG_API_KEY: str = os.getenv("GRAPHRAG_API_KEY", "")
+    # Prefer Gemini-native structured search over official library even if available
+    GRAPHRAG_FORCE_GEMINI_STRUCTURED: bool = os.getenv("GRAPHRAG_FORCE_GEMINI_STRUCTURED", "true").lower() == "true"
+    # Phase 6 flag: legacy|graphrag (determines default ingestion path for new docs)
+    DEFAULT_INGEST_MODE: str = os.getenv("DEFAULT_INGEST_MODE", "graphrag")  # legacy|graphrag
+    
+    # GraphRAG & Vector settings
+    GRAPH_STORE: str = os.getenv("GRAPH_STORE", "sqlite")  # sqlite|neo4j
+    NEO4J_URI: str = os.getenv("NEO4J_URI", "")
+    NEO4J_USER: str = os.getenv("NEO4J_USER", "")
+    NEO4J_PASSWORD: str = os.getenv("NEO4J_PASSWORD", "")
+    QDRANT_URL: str = os.getenv("QDRANT_URL", "")  # optional, if vector DB is available
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "openai")  # openai|none
+    MULTI_TENANT: bool = os.getenv("MULTI_TENANT", "false").lower() == "true"
+    DEFAULT_NAMESPACE: str = os.getenv("DEFAULT_NAMESPACE", "public")
+    # Index orchestrator schedule (seconds); 0 disables
+    INDEX_SCHEDULE_INTERVAL_SECONDS: int = int(os.getenv("INDEX_SCHEDULE_INTERVAL_SECONDS", "0"))
+    # Cluster summarization budgeting
+    CLUSTER_SUMMARY_DAILY_TOKEN_BUDGET: int = int(os.getenv("CLUSTER_SUMMARY_DAILY_TOKEN_BUDGET", "20000"))
+    CLUSTER_SUMMARY_MAX_TOKENS_PER: int = int(os.getenv("CLUSTER_SUMMARY_MAX_TOKENS_PER", "180"))
+    CLUSTER_SUMMARY_RATE_LIMIT_PER_MIN: int = int(os.getenv("CLUSTER_SUMMARY_RATE_LIMIT_PER_MIN", "15"))
     
     # Smart Assistant settings
     SMART_ASSISTANT_URL: str = os.getenv("SMART_ASSISTANT_URL", "http://localhost:8001")

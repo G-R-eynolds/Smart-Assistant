@@ -8,7 +8,6 @@ import asyncio
 import json
 import re
 import logging
-import random
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
@@ -38,7 +37,7 @@ class Pipeline:
         """Configuration valves for the pipeline function"""
         smart_assistant_url: str = "http://localhost:8001"
         enabled: bool = True
-        max_jobs: int = 10
+        max_jobs: int = 20
         timeout_seconds: int = 30
         use_gemini_parsing: bool = True
         gemini_api_key: str = ""
@@ -47,6 +46,7 @@ class Pipeline:
     def __init__(self):
         self.type = "filter"
         self.valves = self.Valves()
+        self.logger = structlog.get_logger()
         
         # Job-related trigger phrases
         self.job_triggers = [
@@ -74,42 +74,60 @@ class Pipeline:
             The processed message with job search results if applicable
         """
         try:
-            # Extract message
-            message = body.get("message", "")
+            # Extract the latest message from the messages array
+            messages = body.get("messages", [])
             
-            # Check if this is a job-related request
-            if not self._contains_job_trigger(message):
-                # Not a job-related request, pass through
+            if not messages:
                 return body
             
+            # Get the latest user message
+            latest_message = messages[-1]
+            
+            # Skip if not a dictionary (malformed message)
+            if not isinstance(latest_message, dict):
+                return body
+                
+            # Skip system-generated messages and AI responses
+            message_role = latest_message.get("role", "")
+            message_content = latest_message.get("content", "")
+            
+            # Only process actual user messages, not system or assistant messages
+            if message_role != "user":
+                return body
+                
+            # Skip system-generated follow-up suggestions and tasks
+            if (message_content.startswith("### Task:") or 
+                message_content.startswith("### Follow-up") or
+                "suggest" in message_content.lower() and "follow-up" in message_content.lower()):
+                return body
+            
+            # Check if this is a job-related request
+            if not self._contains_job_trigger(message_content):
+                # Not a job-related request, pass through
+                return body
+
             logger.info(
                 "Processing job discovery request", 
-                user_id=user.get("id") if user else None,
-                message_preview=message[:100]
+                user_id=user.get("id") if isinstance(user, dict) and user else None,
+                message_preview=message_content[:100],
+                message_role=latest_message.get("role", "unknown")
             )
             
             # Extract job parameters
-            search_params = await self._extract_job_parameters(message, user)
+            search_params = await self._extract_job_parameters(message_content, user)
             
             # Get jobs based on parameters
             jobs = await self._discover_jobs(search_params)
             
-            # Format response
+            # Format response - fix the data structure issue
             response = self._format_job_response(jobs)
             
-            # Update the body with the job search results
-            body["response"] = response
-            body["processed"] = True
-            body["metadata"] = {
-                "smart_assistant_job_search": {
-                    "parameters": search_params,
-                    "job_count": len(jobs),
-                    "timestamp": datetime.now().isoformat()
-                }
-            }
+            # Replace the user's message with our job search results
+            # This way Gemini will process our results instead of the original command
+            if isinstance(latest_message, dict):
+                latest_message["content"] = f"Please help me understand these job search results:\n\n{response}"
             
             return body
-            
         except Exception as e:
             logger.error(f"Error processing job request: {e}")
             # If there's an error, just pass through the original message
@@ -126,85 +144,73 @@ class Pipeline:
         """
         Extract job search parameters from a natural language message
         
-        Uses either Gemini (if available) or regex-based extraction as a fallback
+        Uses Gemini Flash for intelligent keyword extraction, with regex as fallback
         """
         if self.valves.use_gemini_parsing:
             try:
-                # Try Gemini first for better parameter extraction
-                return await self._extract_with_gemini(message, user)
+                # Use Gemini Flash for sophisticated parameter extraction
+                from app.core.gemini_client import GeminiClient
+                
+                gemini_client = GeminiClient()
+                
+                if gemini_client.is_configured():
+                    logger.info("Using Gemini Flash for job parameter extraction")
+                    extracted_data = await gemini_client.extract_job_search_keywords(message)
+                    
+                    if extracted_data.get("success", True):  # Gemini extraction succeeded
+                        # Convert to our expected format
+                        return {
+                            "role": extracted_data.get("keywords", message),
+                            "location": extracted_data.get("location", ""),
+                            "experience_level": self._map_experience_level(extracted_data.get("experience_level", "")),
+                            "employment_type": self._map_employment_type(extracted_data.get("job_type", "")),
+                            "query": message,
+                            "extraction_method": "gemini",
+                            "gemini_reasoning": extracted_data.get("reasoning", ""),
+                            "original_extraction": extracted_data
+                        }
+                    else:
+                        logger.warning(f"Gemini extraction failed: {extracted_data.get('error', 'Unknown error')}")
+                        
+                else:
+                    logger.warning("Gemini not configured, falling back to regex extraction")
+                    
             except Exception as e:
                 logger.warning(f"Gemini extraction failed, falling back to regex: {e}")
-                # Fall back to regex extraction
-                return self._extract_with_regex(message)
-        else:
-            # Use regex extraction directly
-            return self._extract_with_regex(message)
-    
-    async def _extract_with_gemini(self, message: str, user: Optional[Dict] = None) -> Dict[str, Any]:
-        """
-        Extract job search parameters using Gemini API
-        
-        This provides more sophisticated parameter extraction compared to regex
-        """
-        # Implementation for Gemini extraction would go here
-        # For now, we'll just return some mock data based on the message
-        
-        # This is where you would make an API call to Gemini in a real implementation
-        
-        # For demo purposes, extract some basic parameters from the message
-        message_lower = message.lower()
-        
-        # Extract job role
-        role_keywords = ["software", "developer", "engineer", "manager", "analyst", "designer"]
-        role = "Software Developer"  # Default
-        for keyword in role_keywords:
-            if keyword in message_lower:
-                if keyword == "software" and "engineer" in message_lower:
-                    role = "Software Engineer"
-                elif keyword == "software":
-                    role = "Software Developer"
-                elif keyword == "developer":
-                    role = "Developer"
-                elif keyword == "engineer" and "software" not in message_lower:
-                    role = "Engineer"
-                elif keyword in ["manager", "analyst", "designer"]:
-                    role = f"{keyword.capitalize()}"
                 
-        # Extract location preference
-        location = "Remote"  # Default
-        if "remote" in message_lower:
-            location = "Remote"
-        elif "san francisco" in message_lower or "sf" in message_lower:
-            location = "San Francisco, CA"
-        elif "new york" in message_lower or "nyc" in message_lower:
-            location = "New York, NY"
-        elif "seattle" in message_lower:
-            location = "Seattle, WA"
-        
-        # Extract experience level
-        experience = "mid"  # Default
-        if any(keyword in message_lower for keyword in ["junior", "entry", "graduate", "recent"]):
-            experience = "entry"
-        elif any(keyword in message_lower for keyword in ["senior", "lead", "experienced"]):
-            experience = "senior"
-        
-        # Extract employment type
-        employment_type = "full-time"  # Default
-        if "part" in message_lower and "time" in message_lower:
-            employment_type = "part-time"
-        elif "contract" in message_lower:
-            employment_type = "contract"
-        elif "intern" in message_lower:
-            employment_type = "internship"
+        # Fall back to regex extraction
+        logger.info("Using regex-based parameter extraction")
+        return self._extract_with_regex(message)
+    
+    def _map_experience_level(self, gemini_level: str) -> str:
+        """Map Gemini experience level to our format"""
+        if not gemini_level:
+            return "mid"
             
-        return {
-            "role": role,
-            "location": location,
-            "experience_level": experience,
-            "employment_type": employment_type,
-            "query": message,
-            "extraction_method": "gemini"
-        }
+        level_lower = gemini_level.lower()
+        if any(term in level_lower for term in ["entry", "junior", "graduate", "recent"]):
+            return "entry"
+        elif any(term in level_lower for term in ["senior", "lead", "principal", "staff"]):
+            return "senior"
+        else:
+            return "mid"
+    
+    def _map_employment_type(self, gemini_type: str) -> str:
+        """Map Gemini job type to our format"""
+        if not gemini_type:
+            return "full-time"
+            
+        type_lower = gemini_type.lower()
+        if "part" in type_lower:
+            return "part-time"
+        elif "contract" in type_lower:
+            return "contract"
+        elif "intern" in type_lower:
+            return "internship"
+        elif "freelance" in type_lower:
+            return "freelance"
+        else:
+            return "full-time"
     
     def _extract_with_regex(self, message: str) -> Dict[str, Any]:
         """
@@ -235,118 +241,191 @@ class Pipeline:
             "extraction_method": "regex"
         }
     
-    async def _discover_jobs(self, parameters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _discover_jobs(self, search_params: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Discover jobs based on extracted parameters
+        Discovers jobs using the LinkedIn scraper and stores them in Airtable.
+        """
+        start_time = datetime.now().timestamp()
+        scraper = None
+        logger = self.logger.bind(
+            function="job_discovery",
+            query=search_params.get("query", ""),
+            location=search_params.get("location", "")
+        )
         
-        In a production system, this would integrate with LinkedIn or similar job search APIs.
-        For now, we generate realistic demo data.
-        """
-        # Generate mock job data for demonstration purposes
-        # In a real system, this would call external job search APIs
+        try:
+            from ..core.linkedin_scraper_v2 import LinkedInScraperV2
+            from ..core.airtable_client import AirtableClient
+            from ..core.job_deduplication import JobDeduplicationService
+            from ..core.gemini_client import GeminiClient
+            from ..core.database import init_db
+            
+            # Initialize database for deduplication
+            await init_db()
+            
+            # Initialize services
+            scraper = LinkedInScraperV2()
+            dedup_service = JobDeduplicationService()
+            gemini_client = GeminiClient()
+            
+            # Get already processed URLs for deduplication
+            logger.info("Checking for duplicate job URLs")
+            processed_urls = await dedup_service.get_processed_urls()
+            
+            # Perform job search
+            logger.info("Starting LinkedIn job search", search_params=search_params)
+            raw_jobs = await scraper.search_jobs(
+                keywords=search_params.get("role", ""),
+                location=search_params.get("location", ""),
+                experience_level=search_params.get("experience_level"),
+                job_type=search_params.get("employment_type"),
+                date_posted=search_params.get("date_posted", "week"),
+                limit=self.valves.max_jobs
+            )
+            
+            if not raw_jobs:
+                logger.warning("No jobs found from LinkedIn search")
+                return []
+            
+            # Filter out duplicate URLs
+            new_jobs = []
+            for job in raw_jobs:
+                job_url = job.get('url', '')
+                if job_url and job_url not in processed_urls:
+                    new_jobs.append(job)
+                else:
+                    logger.debug(f"Skipping duplicate job: {job.get('title', 'Unknown')} at {job.get('company', 'Unknown')}")
+            
+            logger.info(f"After deduplication: {len(new_jobs)} new jobs out of {len(raw_jobs)} total")
+            
+            # Analyze jobs against CV for relevance
+            analyzed_jobs = []
+            for i, job in enumerate(new_jobs, 1):
+                job_title = job.get('title', 'Unknown Position')
+                company = job.get('company', 'Unknown Company')
+                description = job.get('description', '')
+                
+                logger.info(f"Analyzing job {i}/{len(new_jobs)}: {job_title} at {company}")
+                
+                try:
+                    # Analyze job posting against CV
+                    analysis = await gemini_client.analyze_job_posting(description)
+                    
+                    if analysis.get('success', False):
+                        # Extract the actual analysis data from the nested structure
+                        analysis_data = analysis.get('analysis', {})
+                        relevance_score = analysis_data.get('relevance_score', 0.5)
+                        match_reasoning = analysis_data.get('match_reasoning', 'Analysis completed')
+                        
+                        # Add analysis results to job data
+                        job['relevance_score'] = relevance_score
+                        job['match_reasoning'] = match_reasoning
+                        job['salary_range'] = analysis_data.get('salary_range', '')
+                        job['education_requirements'] = analysis_data.get('education_requirements', '')
+                        job['cv_analyzed'] = True
+                        
+                        # Only include jobs with decent relevance (>= 0.6 by default)
+                        min_relevance = search_params.get('min_relevance_score', 0.6)
+                        if relevance_score >= min_relevance:
+                            analyzed_jobs.append(job)
+                            logger.info(f"✅ Included job (relevance: {relevance_score:.2f}): {job_title}")
+                        else:
+                            logger.info(f"❌ Excluded job (relevance: {relevance_score:.2f}): {job_title} - {match_reasoning}")
+                    else:
+                        # If analysis fails, include job with default relevance
+                        job['relevance_score'] = 0.5
+                        job['match_reasoning'] = 'Analysis failed, included for review'
+                        job['cv_analyzed'] = False
+                        analyzed_jobs.append(job)
+                        logger.warning(f"⚠️ Analysis failed for {job_title}, including anyway")
+                        
+                except Exception as e:
+                    logger.error(f"Error analyzing job {job_title}: {e}")
+                    # Include job anyway with low relevance
+                    job['relevance_score'] = 0.3
+                    job['match_reasoning'] = f'Analysis error: {str(e)}'
+                    job['cv_analyzed'] = False
+                    analyzed_jobs.append(job)
+            
+            logger.info(f"After CV analysis: {len(analyzed_jobs)} suitable jobs")
+            
+            # Store new jobs in Airtable and mark URLs as processed
+            if analyzed_jobs:
+                try:
+                    airtable_client = AirtableClient()
+                    await airtable_client.add_jobs(analyzed_jobs)
+                    logger.info(f"Stored {len(analyzed_jobs)} jobs in Airtable")
+                    
+                    # Mark URLs as processed
+                    await dedup_service.add_processed_urls(analyzed_jobs)
+                    logger.info(f"Marked {len(analyzed_jobs)} job URLs as processed")
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to store jobs or update processed URLs: {e}")
+                    # Continue without storage - don't fail the whole operation
+            
+            logger.info(f"Job search completed", job_count=len(analyzed_jobs))
+            return analyzed_jobs
+            
+        except Exception as e:
+            logger.error(f"Job discovery error: {e}")
+            return []
+        finally:
+            if scraper:
+                try:
+                    await scraper.close()
+                except:
+                    pass
 
-        # Extract parameters
-        role = parameters.get("role", "Software Developer")
-        location = parameters.get("location", "Remote")
-        experience_level = parameters.get("experience_level", "mid")
-        
-        # Generate job titles based on role and experience level
-        if experience_level == "entry":
-            titles = [f"Junior {role}", f"Associate {role}", f"{role} I", f"Entry-Level {role}"]
-        elif experience_level == "senior":
-            titles = [f"Senior {role}", f"Lead {role}", f"Principal {role}", f"{role} III"]
-        else:
-            titles = [role, f"{role} II", f"Mid-Level {role}", f"Experienced {role}"]
-        
-        # Generate company names
-        companies = ["TechCorp Inc", "InnovateLabs", "StartupCo", "MegaSoft", "ByteWorks", 
-                     "DataSphere", "CloudNine", "Algorithmics", "CodeCraft", "DevSolutions"]
-        
-        # Generate locations (if not remote)
-        locations = ["San Francisco, CA", "New York, NY", "Seattle, WA", "Austin, TX", 
-                    "Boston, MA", "Chicago, IL", "Denver, CO", "Portland, OR"]
-        
-        if location.lower() != "remote":
-            # Use the specified location or choose randomly for variety
-            job_locations = [location] * 5 + random.sample(locations, 3)
-        else:
-            # All remote
-            job_locations = ["Remote"] * 8
-        
-        # Generate jobs
-        jobs = []
-        for i in range(min(8, self.valves.max_jobs)):
-            # Calculate relevance score - first few are more relevant
-            relevance = 0.95 - (i * 0.05) + random.uniform(-0.05, 0.05)
-            relevance = min(0.99, max(0.6, relevance))
-            
-            # Assign location
-            job_location = job_locations[i % len(job_locations)]
-            
-            # Skills match calculation
-            skills_pool = ["Python", "JavaScript", "React", "Node.js", "TypeScript", "Docker", 
-                          "AWS", "SQL", "Git", "Java", "C++", "Go", "Rust", "TensorFlow"]
-            skills_match = random.sample(skills_pool, random.randint(3, 5))
-            
-            # Create job object
-            job = {
-                "title": random.choice(titles),
-                "company": random.choice(companies),
-                "location": job_location,
-                "relevance_score": round(relevance, 2),
-                "job_url": f"https://linkedin.com/jobs/demo-{i+1}",
-                "description": f"We're looking for a talented {role} to join our team. You'll work on exciting projects using cutting-edge technologies.",
-                "employment_type": parameters.get("employment_type", "full-time"),
-                "experience_level": experience_level,
-                "ai_insights": {
-                    "match_reasoning": f"Good match based on your {role} background and {experience_level}-level experience requirements.",
-                    "skills_match": skills_match,
-                    "experience_match": random.choice([True, True, False]) if i > 3 else True
-                }
-            }
-            jobs.append(job)
-        
-        return jobs
-    
-    def _format_job_response(self, jobs_result: Dict[str, Any]) -> str:
+    def _format_job_response(self, jobs: List[Dict[str, Any]]) -> str:
         """
         Format job results into a readable response for the chat interface
         
         Args:
-            jobs_result: The job search results
+            jobs: List of job dictionaries
             
         Returns:
             A formatted string response for display in the chat
         """
-        jobs = jobs_result.get("jobs", [])
         if not jobs:
             return "I couldn't find any matching jobs at the moment. Try refining your search criteria."
         
         # Format the job results as markdown for nice display in chat
-        response = "### 🔍 Job Search Results\n\n"
+        response = "### 🔍 Job Search Results (CV-Analyzed)\n\n"
         
         # Add top 3 jobs with details
         for i, job in enumerate(jobs[:3]):
             title = job.get("title", "Unknown Position")
             company = job.get("company", "Unknown Company")
             location = job.get("location", "Unknown Location")
-            url = job.get("job_url", "#")
-            relevance = job.get("relevance_score", 0) * 100
+            url = job.get("url", job.get("job_url", "#"))
+            relevance = job.get("relevance_score", 0)
+            cv_analyzed = job.get("cv_analyzed", False)
             
             response += f"**{i+1}. [{title} at {company}]({url})**\n"
             response += f"📍 {location} | "
-            response += f"🎯 {relevance:.0f}% Match\n"
+            response += f"🎯 {relevance*100:.0f}% CV Match"
             
-            # Add AI insights if available
-            insights = job.get("ai_insights", {})
-            if insights:
-                skills = insights.get("skills_match", [])
-                if skills:
-                    response += f"💻 Skills: {', '.join(skills[:3])}\n"
-                
-                reasoning = insights.get("match_reasoning")
-                if reasoning:
-                    response += f"🤔 *{reasoning}*\n"
+            # Add CV analysis indicator
+            if cv_analyzed:
+                response += " ✅\n"
+            else:
+                response += " ⚠️\n"
+            
+            # Add CV match reasoning
+            match_reasoning = job.get("match_reasoning")
+            if match_reasoning:
+                response += f"🧠 *{match_reasoning}*\n"
+            
+            # Add salary if available
+            salary_range = job.get("salary_range")
+            if salary_range:
+                response += f"� {salary_range}\n"
+            
+            # Add education requirements if available
+            education_requirements = job.get("education_requirements")
+            if education_requirements:
+                response += f"🎓 {education_requirements}\n"
             
             response += "\n"
         
@@ -378,6 +457,8 @@ class Pipeline:
                 - parameters: Extracted search parameters
                 - stats: Search statistics
         """
+        start_time = datetime.now().timestamp()
+        
         try:
             # Extract message
             message = params.get("message", "")
@@ -403,7 +484,7 @@ class Pipeline:
             stats = {
                 "total_jobs": len(jobs),
                 "relevant_jobs": len([j for j in jobs if j.get("relevance_score", 0) >= 0.6]),
-                "processing_time_ms": round(random.uniform(800, 2500))
+                "processing_time_ms": int((datetime.now().timestamp() - start_time) * 1000)
             }
             
             return {

@@ -1,0 +1,21 @@
+# Example GraphRAG indexing configuration (Phase 2)
+# Copy to graphrag_config.yml and adjust paths/models as needed.
+
+index:
+  input_directory: data/raw_docs
+  working_directory: graphrag_work
+  output_directory: graphrag_artifacts
+  # Model + embedding settings (placeholder)
+  llm_model: gpt-4o-mini
+  embedding_model: text-embedding-3-small
+  max_chunk_tokens: 750
+  overlap_tokens: 80
+  community:
+    algorithm: louvain
+    levels: 2
+  reports:
+    max_tokens: 280
+    llm_model: gpt-4o-mini
+
+# Future: custom operations for ROLE_AT / USES_TECH extraction
+custom_operations: []

@@ -1,116 +1,57 @@
-# Agent Framework Specification
+# Pipelines & Integration Framework (Open WebUI)
 
 ## Overview
 
-This document defines the principles, roles, and interaction patterns for the collaborative multi-agent system that powers the Smart Assistant. The framework is designed using CrewAI to ensure that specialized agents can work together effectively, sharing context and intelligence to accomplish complex user-driven workflows.
+Open WebUI Pipelines invoke the Smart Assistant REST API to perform specialized tasks (job discovery, inbox processing, intelligence briefings). Pipelines are lightweight Python modules loaded by Open WebUI that can inspect/modify chat messages and call external services (our backend). This replaces the earlier internal “multi-agent” approach.
 
 ## Core Principles
 
-1.  **Single Responsibility**: Each agent has a single, clearly defined purpose and a corresponding set of capabilities. This ensures modularity and maintainability.
-2.  **Collaborative Intelligence**: Agents operate within a shared context, enabling them to delegate tasks, share findings, and build upon each other's work.
-3.  **Human-in-the-Loop**: All significant AI-driven actions or content generation tasks are subject to user review and approval, ensuring quality and control.
-4.  **Cost Awareness**: Agents are designed to be efficient, using intelligent model selection, batching, and caching to minimize API costs.
-5.  **Fault Tolerance**: The framework is designed to be resilient. Agents can handle failures gracefully and, where possible, operate with degraded functionality if a dependency is unavailable.
+1) Single responsibility: Each pipeline focuses on one capability (jobs, inbox, briefing).
+2) Minimal coupling: Pipelines call the backend via HTTP with small, versionable JSON contracts.
+3) Human-in-the-loop: Results surface in chat; follow-ups are user-triggered.
+4) Cost-aware: Prefer lightweight checks; rely on backend caching/dedup where possible.
 
-## Agent Roles and Responsibilities
+## Pipelines (current)
 
-The system is composed of agents with distinct roles, ensuring a clear separation of concerns.
+- Job Discovery: Matches triggers like “find jobs …”; POSTs to `/api/smart-assistant/jobs/search`; renders a compact list with links and relevance.
+- Inbox Management: Optional; POSTs to `/api/smart-assistant/inbox/process`; returns categorized summary and top actions.
+- Intelligence Briefing: POSTs to `/api/smart-assistant/briefing/generate`; returns a short briefing with sections.
 
-### 1. Orchestrator Agent (`AgentConductor`)
--   **Role**: The central coordinator for all multi-agent workflows.
--   **Responsibilities**:
-    -   Receives initial user requests from the API Gateway.
-    -   Interprets the user's intent and defines the high-level workflow required.
-    -   Selects and sequences the appropriate specialist agents for the task.
-    -   Manages the lifecycle of a workflow, tracking its state from initiation to completion.
-    -   Facilitates communication and data transfer between agents.
-    -   Handles errors and orchestrates recovery or graceful failure of a workflow.
+## Pipeline contract (minimal)
 
-### 2. Specialist Agents
-Specialist agents perform the core domain-specific tasks of the system.
+Each pipeline provides:
+- `id`, `name` strings
+- `Valves` Pydantic model for config (e.g., `smart_assistant_url`, `api_key`, `timeout_seconds`, limits)
+- `inlet(self, body, user)`: Inspect the incoming chat message; if it matches triggers, call the backend and append a formatted response; otherwise pass through.
 
--   **`JobAgent`**:
-    -   **Purpose**: Manages the job discovery pipeline.
-    -   **Responsibilities**: Polls external job boards, standardizes job data, scores jobs against the user's profile, and stores qualified leads.
+Backend compatibility expectations:
+- Endpoints accept JSON and return structured JSON (`items`, `summary`, `meta` where applicable).
+- Non-200 responses should be caught by the pipeline and surfaced as a concise error message.
 
--   **`EmailAgent`**:
-    -   **Purpose**: Provides intelligence for the user's inbox.
-    -   **Responsibilities**: Fetches new emails, classifies them by category and priority, extracts key information, and generates summaries.
+## Triggers and UX
 
--   **`ContentAgent`**:
-    -   **Purpose**: Assists with the creation of professional documents.
-    -   **Responsibilities**: Analyzes target requirements (e.g., a job description), tailors base templates (e.g., a CV), and generates high-quality, context-aware content.
+- Jobs: “find jobs”, “search jobs”, “job hunt”, “linkedin jobs … <role> in <location>”
+- Inbox: “check inbox”, “process email”, “email summary”
+- Briefing: “daily briefing”, “intelligence update”, “market news”
 
--   **`NewsAgent`**:
-    -   **Purpose**: Curates a personalized intelligence briefing.
-    -   **Responsibilities**: Aggregates news from various sources, filters content based on user interests, and synthesizes key insights.
+Pipelines should show a short “working…” notice for long calls and truncate output with a “Show more” link when needed.
 
-## Agent Interaction Patterns
+## Configuration & security
 
-This section defines the standardized patterns for how agents communicate and collaborate.
+- Configure via `Valves`; default `smart_assistant_url` is `http://localhost:8000` for local.
+- If an API key is required, send `Authorization: Bearer <token>` to the backend.
+- Respect user-level rate limits; debounce repeated triggers; use backend `limit` parameters.
 
-### 1. Workflow Orchestration
--   **Pattern**: The `AgentConductor` uses a "Director" pattern. It defines a plan (a sequence of tasks) and delegates each task to the appropriate specialist agent.
--   **Example Flow (Job Application)**:
-    1.  User requests to apply for a job.
-    2.  `AgentConductor` creates a workflow:
-        a.  **Task 1**: Delegate to `JobAgent` to retrieve all details for the target job.
-        b.  **Task 2**: Delegate to `ContentAgent`, providing the job details and the user's base CV, to generate a tailored CV.
-        c.  **Task 3**: Delegate to `ContentAgent` again to draft a cover letter.
-    3.  `AgentConductor` collects the results and presents them to the user for approval.
+## Testing quick start
 
-### 2. Task Delegation
--   **Pattern**: A specialist agent can delegate a sub-task to another agent if it requires a capability outside its own.
--   **Example**: While processing an email, the `EmailAgent` might identify a job opportunity mentioned in the text. It would then delegate a task to the `JobAgent` to process and score this opportunity, rather than attempting to do so itself.
+1) Verify backend is up: GET `/health` should return `{ "status": "ok" }`.
+2) Test jobs endpoint: POST `/api/smart-assistant/jobs/search` with `{ "query": "python developer remote", "limit": 5 }`.
+3) Enable the pipeline in Open WebUI and send “find python developer jobs”.
 
-### 3. Context Sharing
--   **Mechanism**: All agents have access to the shared `VectorMemorySystem`. Before executing a task, an agent queries this system to retrieve relevant context (e.g., user preferences, recent activities, historical data). After completing a task, it writes back any new, valuable information to the memory system.
--   **Benefit**: This ensures that all agents are working with the most up-to-date and relevant information, leading to more coherent and intelligent outcomes.
+## Migration note
 
-## Agent Configuration
-
--   **Centralized Management**: The core configuration for each agent (e.g., base prompts, model preferences, allowed tools) will be managed in a centralized configuration store (e.g., YAML files or a dedicated database table).
--   **Dynamic Loading**: Configurations will be loaded at runtime, allowing for updates without requiring a full system redeployment.
--   **User Overrides**: The system will support user-specific overrides for certain parameters (e.g., preferred tone for content generation), which will be stored and applied by the `ContextManager`.
-
-## Cost Optimization Framework
-
-The agent framework will incorporate several strategies to manage operational costs, particularly for LLM API calls.
-
--   **Intelligent Model Selection**: The `AgentConductor` will select the most cost-effective model for a given task based on its complexity. For example, simple classification tasks (`EmailAgent`) will use a faster, cheaper model (e.g., Gemini Flash), while complex content generation (`ContentAgent`) will use a more powerful model (e.g., Gemini Pro).
--   **Request Batching**: Agents will be designed to batch multiple items into a single API request where possible (e.g., scoring multiple jobs at once).
--   **Intelligent Caching**: Results from expensive API calls will be cached (e.g., in Redis). Before making a new request, an agent will first check if a sufficiently fresh result already exists in the cache.
+Legacy “multi-agent” content was removed in favor of the simpler, reliable pipeline → REST integration used today. For orchestration or RAG, use Open WebUI’s existing features (pipelines, documents, vector DB) instead of custom agent layers.
 
 ---
 
-**Next**: Review [Data Architecture](./03-data-architecture.md) for database design and vector memory management.
-
-### Batch Processing Optimization
-```python
-class BatchOptimizer:
-    def __init__(self, max_batch_size: int = 20):
-        self.max_batch_size = max_batch_size
-        self.batch_accumulator = defaultdict(list)
-    
-    async def add_to_batch(self, agent_name: str, task: AgentTask):
-        """Add task to batch for processing"""
-        self.batch_accumulator[agent_name].append(task)
-        
-        if len(self.batch_accumulator[agent_name]) >= self.max_batch_size:
-            await self._process_batch(agent_name)
-    
-    async def _process_batch(self, agent_name: str):
-        """Process accumulated batch"""
-        tasks = self.batch_accumulator[agent_name]
-        self.batch_accumulator[agent_name] = []
-        
-        agent = self.agents[agent_name]
-        results = await agent.process_batch(tasks)
-        
-        for task, result in zip(tasks, results):
-            await self._notify_completion(task.id, result)
-```
-
----
-
-**Next**: Review [Data Architecture](./03-data-architecture.md) for vector database design and data management patterns.
+Next: [Data Architecture](./03-data-architecture.md)

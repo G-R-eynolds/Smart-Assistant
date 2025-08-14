@@ -387,11 +387,67 @@ async function scrapeLinkedIn() {{
             console.error('⚠️ No job cards found, proceeding anyway...');
         }}
         
-        // Scroll to load more jobs
+        // Try to click "See more jobs" or similar buttons
+        console.error('🔍 Looking for "See more" buttons...');
+        try {{
+            const seeMoreSelectors = [
+                'button[aria-label*="See more"]',
+                'button[data-test-pagination-page-btn="next"]',
+                '.jobs-search-results-list__pagination button',
+                '[data-testid="jobs-search-see-more-jobs"]',
+                '.infinite-scroller__show-more-button'
+            ];
+            
+            for (const selector of seeMoreSelectors) {{
+                const button = await page.$(selector);
+                if (button) {{
+                    console.error(`🔍 Found see more button: ${{selector}}`);
+                    await button.click();
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    break;
+                }}
+            }}
+        }} catch (e) {{
+            console.error('⚠️ No see more button found or click failed');
+        }}
+        
+        // Scroll to load more jobs - Enhanced scrolling with job count monitoring
         console.error('📜 Scrolling to load more jobs...');
-        for (let i = 0; i < 3; i++) {{
+        let previousJobCount = 0;
+        let stableCount = 0;
+        
+        for (let i = 0; i < 8; i++) {{
+            // Scroll down
             await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
             await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Check current job count
+            const currentJobCount = await page.evaluate(() => {{
+                const jobCards = document.querySelectorAll(
+                    '.job-search-card, .base-card, [data-testid="job-card"], .base-search-card'
+                );
+                return jobCards.length;
+            }});
+            
+            console.error(`📜 Scroll ${{i + 1}}/8: Found ${{currentJobCount}} jobs`);
+            
+            // If job count hasn't increased for 2 consecutive scrolls, we might have reached the end
+            if (currentJobCount === previousJobCount) {{
+                stableCount++;
+                if (stableCount >= 2 && currentJobCount >= {limit}) {{
+                    console.error(`📜 Job count stable at ${{currentJobCount}}, stopping scroll`);
+                    break;
+                }}
+            }} else {{
+                stableCount = 0;
+            }}
+            
+            previousJobCount = currentJobCount;
+            
+            // Additional wait if we found more jobs to let them fully load
+            if (currentJobCount > previousJobCount) {{
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }}
         }}
         
         // Extract job data

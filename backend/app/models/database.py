@@ -9,6 +9,7 @@ Provides SQLAlchemy ORM models for:
 """
 from typing import Optional, Dict, Any, List
 from sqlalchemy import Column, String, Text, Integer, Boolean, JSON, DateTime, Float, ForeignKey, Table
+from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -150,3 +151,85 @@ class ProcessedJobUrl(Base, TimestampMixin):
     
     def __repr__(self):
         return f"<ProcessedJobUrl(url='{self.url}', title='{self.job_title}')>"
+
+# --- GraphRAG models (SQLite fallback) ---
+class GraphNode(Base, TimestampMixin):
+    __tablename__ = "graphrag_nodes"
+
+    id = Column(String, primary_key=True, index=True)
+    label = Column(String, index=True)  # e.g., Person, Organization, Concept
+    name = Column(String, index=True)   # human-readable name
+    # Use MutableDict wrapper so in-place mutation (e.g., adding layout coordinates) is detected
+    properties = Column(MutableDict.as_mutable(JSON), nullable=True)  # arbitrary properties
+    source_ids = Column(JSON, nullable=True)  # list of source document IDs
+    embedding = Column(JSON, nullable=True)   # optional: store local embedding vector
+    # Phase 3: explicit namespace column (denormalized copy for fast filtering)
+    namespace = Column(String, index=True, nullable=True)
+
+class GraphEdge(Base, TimestampMixin):
+    __tablename__ = "graphrag_edges"
+
+    id = Column(String, primary_key=True, index=True)
+    source_id = Column(String, ForeignKey("graphrag_nodes.id"), index=True)
+    target_id = Column(String, ForeignKey("graphrag_nodes.id"), index=True)
+    relation = Column(String, index=True)  # e.g., WORKS_AT, RELATED_TO
+    confidence = Column(Float, default=0.5)
+    properties = Column(MutableDict.as_mutable(JSON), nullable=True)
+
+class GraphClusterMembership(Base, TimestampMixin):
+    """Phase 3: Cluster membership mapping (namespace + algorithm scope)."""
+    __tablename__ = "graphrag_cluster_memberships"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    node_id = Column(String, ForeignKey("graphrag_nodes.id"), index=True, nullable=False)
+    cluster_id = Column(String, index=True, nullable=False)  # e.g. c1, c2
+    namespace = Column(String, index=True, nullable=False)
+    algorithm = Column(String, index=True, default="louvain")
+    # Optional score / modularity contribution placeholder
+    score = Column(Float, nullable=True)
+
+class GraphClusterSummary(Base, TimestampMixin):
+    """Cached LLM summaries for clusters (Phase 3)."""
+    __tablename__ = "graphrag_cluster_summaries"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    cluster_id = Column(String, index=True, nullable=False)
+    namespace = Column(String, index=True, nullable=False)
+    algorithm = Column(String, index=True, default="louvain")
+    top_terms_hash = Column(String, index=True, nullable=True)
+    label = Column(String, nullable=True)
+    summary = Column(Text, nullable=True)
+    token_count = Column(Integer, nullable=True)
+    # Simple freshness TTL enforcement could rely on updated_at
+
+class GraphSnapshot(Base, TimestampMixin):
+    """Graph snapshot metadata (Phase >=11) capturing high-level state for diff & time-travel views."""
+    __tablename__ = "graphrag_snapshots"
+
+    id = Column(String, primary_key=True, index=True)
+    namespace = Column(String, index=True, nullable=False)
+    node_count = Column(Integer, nullable=False)
+    edge_count = Column(Integer, nullable=False)
+    modularity = Column(Float, nullable=True)
+    metadata_json = Column(JSON, nullable=True)  # store extra metrics (degree histogram, cluster sizes)
+
+
+class IngestLog(Base, TimestampMixin):
+        """Phase 5: Track document ingestion & indexing state to enable delta indexing.
+
+        Status values:
+            - ingested: raw ingest done (graph nodes/edges present)
+            - indexed: included in last successful batch index
+            - stale: content changed since last index run
+        """
+        __tablename__ = "graphrag_ingest_log"
+
+        id = Column(String, primary_key=True, index=True)  # doc_id
+        namespace = Column(String, index=True, nullable=False)
+        content_hash = Column(String, index=True, nullable=False)
+        first_seen_at = Column(DateTime(timezone=True), server_default=func.now())
+        last_ingest_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+        last_indexed_at = Column(DateTime(timezone=True), nullable=True)
+        status = Column(String, index=True, default="ingested")
+        meta = Column(JSON, nullable=True)
+

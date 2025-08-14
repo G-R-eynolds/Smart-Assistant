@@ -1,0 +1,7 @@
+entity_id,name,type,description
+6de1f595-5f38-409e-ad9c-e5e01c2df6fd,Acme Corp,Organization,
+48c398ee-9da4-4046-a7f8-3021be7b8c55,Beta Systems,Organization,
+7ca93c12-36eb-4af1-88ae-75fad5bf0675,AI research,ResearchArea,
+12da498a-b58d-4693-957b-20fd49eb0582,neural architectures,Technology,advanced neural architectures for robotics and automation
+3afdfd4c-5c15-4779-9a20-e20fe1d4c036,robotics,Industry,
+7d13b604-3219-454c-9423-f386e1732533,automation,Industry,

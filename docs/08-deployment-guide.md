@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides **comprehensive deployment procedures** for the Smart Assistant multi-agent system, covering development setup, production deployment, security hardening, and operational monitoring. The deployment strategy prioritizes cost efficiency, security, and scalability while maintaining production-grade reliability.
+This guide provides **comprehensive deployment procedures** for the Smart Assistant backend and its Open WebUI integration, covering development setup, production deployment, security hardening, and operational monitoring. The strategy prioritizes cost efficiency, security, and scalability while maintaining production-grade reliability.
 
 ## Deployment Architecture
 

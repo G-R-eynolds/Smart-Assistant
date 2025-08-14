@@ -113,3 +113,15 @@ pytest
   - `functions/`: Pipeline functions
   - `main.py`: FastAPI app entrypoint
 - `tests/`: All Python tests
+
+## CLI
+
+Utility commands:
+
+```bash
+python -m cli health
+python -m cli jobs "python developer remote" --limit 3
+python -m cli import-graphrag --path ../graphrag_output --namespace public --dry-run
+```
+
+`import-graphrag` ingests GraphRAG artifact exports (entities, relationships, communities, community_reports) from a directory (parquet or csv). Omit `--dry-run` to persist changes. Phase 1 focuses on idempotent upserts; later phases will integrate query-time fusion.

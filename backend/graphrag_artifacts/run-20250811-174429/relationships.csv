@@ -1,0 +1,6 @@
+relationship_id,src_id,dst_id,relationship_type,weight
+r_4887384837,3673812d-8dc4-4e3e-b896-f6c48428717f,dd9950be-28c9-4e7d-8f67-e5ce71c758d5,Acquisition,1.0
+r_4922581784,3673812d-8dc4-4e3e-b896-f6c48428717f,d8e8ba68-db21-416a-a7e1-5a4bcb86d0bb,Expands,1.0
+r_150725638,dd9950be-28c9-4e7d-8f67-e5ce71c758d5,2c1840d4-daae-4bfa-ba26-ec8281c447f7,develops,1.0
+r_5363253042,2c1840d4-daae-4bfa-ba26-ec8281c447f7,adfa527a-d215-4654-8c8f-75fbc852a62a,used_in,1.0
+r_908951764,2c1840d4-daae-4bfa-ba26-ec8281c447f7,570dc2d3-b33a-404d-b676-c33fe3e53afc,used_in,1.0

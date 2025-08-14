@@ -1,0 +1,10 @@
+{
+  "success": true,
+  "extraction": "Heuristic extraction",
+  "stats": {
+    "nodes": 2,
+    "edges": 126,
+    "store": "sqlite"
+  },
+  "namespace": "public"
+}
